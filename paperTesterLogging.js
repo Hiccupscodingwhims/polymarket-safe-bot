@@ -1,6 +1,7 @@
 import fs from "fs";
 import fetch from "node-fetch";
 import express from 'express';
+import { uploadCsv } from "./uploadCsv.js";
 
 // ================= CONFIG =================
 const FEE_RATE = 0.01;
@@ -10,15 +11,15 @@ const configPath = process.argv[2];
 const config = (await import(`./configs/${configPath}`)).default;
 
 const {
-  TOTAL_BUDGET,
-  STOP_PROB_DROP
+    TOTAL_BUDGET,
+    STOP_PROB_DROP
 } = config.TRADER;
 
 const SCANNER_INPUT =
-  `scanner-output-${config.NAME}.json`;
+    `scanner-output-${config.NAME}.json`;
 
 const CSV_FILE =
-  `paper-${config.NAME}.csv`;
+    `paper-${config.NAME}.csv`;
 
 
 // ================= CONTROL SERVER =================
@@ -91,7 +92,7 @@ function exportSnapshot() {
 
     const totalPnl = wallet.positions
         .filter(p => p.resolved && p.pnlWithFees !== undefined)
-        .reduce((sum,p)=>sum+p.pnlWithFees,0);
+        .reduce((sum, p) => sum + p.pnlWithFees, 0);
 
     console.log(
         `📸 Snapshot exported (${rows.length} trades)` +
@@ -323,8 +324,28 @@ async function watchResolutions() {
         if (!unresolved) {
             clearInterval(interval);
             console.log("\n🏁 All markets resolved. Paper trading complete.\n");
+
             dumpCsvToLogs();
+
+            try {
+                const ts = Date.now();
+
+                await uploadCsv(
+                    CSV_FILE,
+                    `${config.NAME}/final-paper-${ts}.csv`
+                );
+
+                await uploadCsv(
+                    SNAPSHOT_FILE,
+                    `${config.NAME}/final-snapshot-${ts}.csv`
+                );
+
+                console.log("☁️ Final CSVs uploaded to Supabase");
+            } catch (err) {
+                console.error("❌ Final upload failed:", err.message);
+            }
         }
+
     }, RESOLUTION_POLL_INTERVAL);
 }
 
@@ -347,11 +368,17 @@ function dumpCsvToLogs() {
 
 process.stdin.setEncoding("utf8");
 
-process.stdin.on("data", (input) => {
+process.stdin.on("data", async (input) => {
     const cmd = input.trim().toLowerCase();
 
     if (cmd === "snapshot") {
         exportSnapshot();
+
+        const remoteName =
+            `${config.NAME}/snapshot-${Date.now()}.csv`;
+
+        await uploadCsv(SNAPSHOT_FILE, remoteName);
     }
 });
+
 

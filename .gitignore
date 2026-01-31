@@ -2,3 +2,4 @@ node_modules/
 path/
 scanner.py
 paperTestsResults/
+.env

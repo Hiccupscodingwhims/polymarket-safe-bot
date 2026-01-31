@@ -1,9 +1,7 @@
 import { spawn } from "child_process";
 
 const configs = [
-  "config1.js",
-  "config2.js",
-  "config3.js"
+  "config1.js"
 ];
 
 for (const cfg of configs) {

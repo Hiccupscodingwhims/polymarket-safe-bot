@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start" : "node discovery.js && node runPipeline.js"
+    "start": "node discovery.js && node runPipeline.js"
   },
   "keywords": [],
   "author": "",
@@ -13,6 +13,8 @@
   "description": "",
   "dependencies": {
     "@polymarket/clob-client": "^5.2.1",
+    "@supabase/supabase-js": "^2.93.3",
+    "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "node-fetch": "^3.3.2"
   }
