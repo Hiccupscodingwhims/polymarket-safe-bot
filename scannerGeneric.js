@@ -60,11 +60,11 @@ async function scan() {
 
             // ⏱️ Skip 15-minute markets
             if (m.slug.includes("15m")) {
-                console.log(`⏭️  Skipping 15m market: ${m.slug}\n`);
+                // console.log(`⏭️  Skipping 15m market: ${m.slug}\n`);
                 continue;
             }
 
-            console.log(`🔍 ${m.slug}`);
+            // console.log(`🔍 ${m.slug}`);
 
             let market;
             try {
@@ -138,16 +138,16 @@ async function scan() {
 
                 // ✅ NEW: execution sanity check
                 if (bestAsk < MIN_PROBABILITY || bestAsk > MAX_PROBABILITY) {
-                    console.log(
-                        `⛔ ${side.name} | Ask ${bestAsk.toFixed(3)} outside [0.80, 0.96]\n`
-                    );
+                    // console.log(
+                    //     `⛔ ${side.name} | Ask ${bestAsk.toFixed(3)} outside [0.80, 0.96]\n`
+                    // );
                     continue;
                 }
 
 
-                console.log(
-                    `✅ ${side.name} | Prob ${prob.toFixed(3)} | Ask ${bestAsk} | Liquidity $${liquidity.toFixed(2)}\n`
-                );
+                // console.log(
+                //     `✅ ${side.name} | Prob ${prob.toFixed(3)} | Ask ${bestAsk} | Liquidity $${liquidity.toFixed(2)}\n`
+                // );
 
                 results.push({
                     slug: m.slug,
