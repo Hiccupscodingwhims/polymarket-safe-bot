@@ -1,19 +1,41 @@
 import fs from "fs";
+import fetch from "node-fetch";
+import express from "express";
 
 // ================= CONFIG =================
 const TOTAL_BUDGET = 50;     // fake wallet
 const FEE_RATE = 0.01;
 const RESOLUTION_POLL_INTERVAL = 2 * 60 * 1000; // 2 minutes
 const CSV_FILE = "./paper-trades.csv";
-// 1% fee
+const STOP_PROB_DROP = 0.10; // 5%
 
+// ================= CONTROL SERVER =================
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get("/snapshot", (req, res) => {
+    exportSnapshot();
+    res.send("📸 Snapshot exported");
+});
+
+app.get("/status", (req, res) => {
+    res.json({
+        balance: wallet.balance,
+        positions: wallet.positions.length
+    });
+});
+
+app.listen(PORT, () => {
+    console.log(`🎛 Control server running on port ${PORT}`);
+});
+
+// ================= CSV =================
 function ensureCsvHeader() {
     if (!fs.existsSync(CSV_FILE)) {
         const header =
             "trade_date,slug,side,entry_price,size,cost," +
             "hours_to_close_at_entry,trade_bought_timestamp," +
             "resolution,trade_resolved_timestamp,payout,pnl_no_fees,pnl_with_fees\n";
-
         fs.writeFileSync(CSV_FILE, header);
     }
 }
@@ -23,6 +45,36 @@ function appendCsvRow(row) {
 }
 
 ensureCsvHeader();
+
+const SNAPSHOT_FILE = "./paper-trades-snapshot.csv";
+
+function exportSnapshot() {
+    const header =
+        "slug,side,entry_price,size_remaining,cost_remaining,resolved\n";
+
+    const rows = wallet.positions
+        .filter(p => p.resolved)
+        .map(p =>
+            [
+                p.slug,
+                p.side,
+                p.entryPrice,
+                p.size.toFixed(4),
+                p.cost.toFixed(2),
+                p.resolved,
+
+            ].join(",")
+        );
+
+    fs.writeFileSync(
+        SNAPSHOT_FILE,
+        header + rows.join("\n")
+    );
+
+    console.log(
+        `📸 Snapshot exported (${rows.length} trades) → ${SNAPSHOT_FILE}`
+    );
+}
 
 
 // ================= WALLET =================
@@ -35,7 +87,6 @@ const wallet = {
 // ================= LOAD SCANNER OUTPUT =================
 const raw = fs.readFileSync("./scanner-output.json", "utf-8");
 const data = JSON.parse(raw);
-
 const markets = data.markets ?? [];
 
 if (markets.length === 0) {
@@ -44,7 +95,6 @@ if (markets.length === 0) {
 }
 
 // ================= ALLOCATION =================
-// IMPORTANT: per QUESTION, equal split
 const allocationPerMarket = TOTAL_BUDGET / markets.length;
 
 console.log(`\n📦 Total Budget: $${wallet.balance.toFixed(2)}`);
@@ -60,7 +110,6 @@ for (const m of markets) {
 
     const maxAffordableSize = allocationPerMarket / price;
     const fillSize = Math.min(maxAffordableSize, availableSize);
-
     if (fillSize <= 0) continue;
 
     const cost = fillSize * price;
@@ -70,11 +119,13 @@ for (const m of markets) {
         slug: m.slug,
         marketId: m.marketId,
         side: m.side,
+        tokenId: m.tokenId,
         entryPrice: price,
+        entryProbability: m.probability,
         size: fillSize,
         cost,
         boughtAt: new Date().toISOString(),
-        hoursToCloseAtEntry: m.hoursToClose,   // ✅ NEW
+        hoursToCloseAtEntry: m.hoursToClose,
         resolved: false
     });
 
@@ -88,13 +139,18 @@ for (const m of markets) {
     );
 }
 
-
-// ================= RESOLUTION (ASSUME ALL YES) =================
+// ================= RESOLUTION + STOP LOSS =================
 async function fetchMarketById(id) {
     const res = await fetch(`https://gamma-api.polymarket.com/markets?id=${id}`);
     if (!res.ok) throw new Error("Resolution fetch failed");
     const data = await res.json();
     return data[0];
+}
+
+async function fetchOrderbook(tokenId) {
+    const res = await fetch(`https://clob.polymarket.com/book?token_id=${tokenId}`);
+    if (!res.ok) throw new Error("Orderbook fetch failed");
+    return res.json();
 }
 
 async function watchResolutions() {
@@ -111,6 +167,78 @@ async function watchResolutions() {
                 continue;
             }
 
+            // ================= STOP LOSS (ADDED) =================
+            try {
+                const prices = JSON.parse(market.outcomePrices);
+                const currentProb =
+                    p.side === "YES"
+                        ? Number(prices[0])
+                        : 1 - Number(prices[0]);
+
+                const probDrop = p.entryProbability - currentProb;
+
+                if (probDrop >= STOP_PROB_DROP) {
+                    console.log(
+                        `🛑 STOP CHECK ${p.slug}\n` +
+                        `   Entry Prob: ${p.entryProbability.toFixed(3)}\n` +
+                        `   Current Prob: ${currentProb.toFixed(3)}\n` +
+                        `   Drop: ${probDrop.toFixed(3)}`
+                    );
+
+                    const book = await fetchOrderbook(p.tokenId);
+                    if (!book.bids || book.bids.length === 0) {
+                        console.log(`⚠️  STOP: no bids available\n`);
+                        continue;
+                    }
+
+                    const bestBid = Math.max(...book.bids.map(b => Number(b.price)));
+                    const bidsAtBest = book.bids.filter(
+                        b => Number(b.price) === bestBid
+                    );
+
+                    const bidSize = bidsAtBest.reduce(
+                        (s, b) => s + Number(b.size),
+                        0
+                    );
+
+                    const exitSize = Math.min(p.size, bidSize);
+                    if (exitSize <= 0) continue;
+
+                    const payout = exitSize * bestBid;
+                    const costPortion = (exitSize / p.size) * p.cost;
+
+                    wallet.balance += payout;
+                    p.size -= exitSize;
+                    p.cost -= costPortion;
+
+                    appendCsvRow([
+                        new Date().toISOString().split("T")[0],
+                        p.slug,
+                        p.side,
+                        p.entryPrice,
+                        exitSize.toFixed(4),
+                        costPortion.toFixed(2),
+                        p.hoursToCloseAtEntry,
+                        p.boughtAt,
+                        "STOP_LOSS",
+                        new Date().toISOString(),
+                        payout.toFixed(2),
+                        (payout - costPortion).toFixed(2),
+                        (payout - costPortion - payout * FEE_RATE).toFixed(2)
+                    ].join(","));
+
+                    console.log(
+                        `🛑 STOP EXIT ${p.slug}\n` +
+                        `   Exited: ${exitSize.toFixed(4)} @ ${bestBid}\n` +
+                        `   Remaining Size: ${p.size.toFixed(4)}\n`
+                    );
+
+                    if (p.size <= 0) p.resolved = true;
+                    continue;
+                }
+            } catch { }
+
+            // ================= ORIGINAL RESOLUTION LOGIC =================
             if (!market.closed) continue;
 
             const prices = JSON.parse(market.outcomePrices);
@@ -118,10 +246,9 @@ async function watchResolutions() {
 
             if (prices[0] === "1") resolution = "YES";
             else if (prices[1] === "1") resolution = "NO";
-            else continue; // not finalized yet
+            else continue;
 
             const resolvedAt = new Date().toISOString();
-
             let payout = 0;
 
             if (
@@ -130,7 +257,6 @@ async function watchResolutions() {
             ) {
                 payout = p.size * 1.0;
             }
-
 
             const fee = payout * FEE_RATE;
             const pnlNoFees = payout - p.cost;
@@ -143,7 +269,6 @@ async function watchResolutions() {
                 new Date().toISOString().split("T")[0],
                 p.slug,
                 p.side,
-                p.strike,
                 p.entryPrice,
                 p.size.toFixed(4),
                 p.cost.toFixed(2),
@@ -163,7 +288,6 @@ async function watchResolutions() {
                 `   P&L (no fees): $${pnlNoFees.toFixed(2)}\n` +
                 `   P&L (with fees): $${pnlWithFees.toFixed(2)}\n`
             );
-
         }
 
         const unresolved = wallet.positions.some(p => !p.resolved);
@@ -173,8 +297,17 @@ async function watchResolutions() {
         }
     }, RESOLUTION_POLL_INTERVAL);
 }
+
 watchResolutions().catch(err => {
     console.error("💥 RESOLUTION WATCHER CRASHED:", err.message);
 });
 
+process.stdin.setEncoding("utf8");
 
+process.stdin.on("data", (input) => {
+    const cmd = input.trim().toLowerCase();
+
+    if (cmd === "snapshot") {
+        exportSnapshot();
+    }
+});

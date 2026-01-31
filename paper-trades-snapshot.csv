@@ -1,0 +1,4 @@
+slug,side,entry_price,size_remaining,cost_remaining,resolved,resolution,resolvedAt,payout,pnlNoFees,pnlWithFees
+egy1-mos-iss-2026-01-29-total-3pt5,NO,0.96,0.0000,0.00,true,STOP_LOSS,2026-01-29T17:09:56.181Z,0.17,-3.99,-3.99
+bitcoin-above-84k-on-january-29,YES,0.917,0.0000,0.00,true,STOP_LOSS,2026-01-29T16:09:57.913Z,3.57,-0.60,-0.63
+will-the-price-of-ethereum-be-between-2700-2800-on-january-29,NO,0.875,0.0000,0.00,true,STOP_LOSS,2026-01-29T16:13:57.658Z,1.96,-2.21,-2.23
